@@ -22,9 +22,12 @@ import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.sql.Types;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+
+import javax.xml.bind.DatatypeConverter;
 
 import org.dbflute.DfBuildProperties;
 import org.dbflute.exception.DfCraftDiffIllegalCraftKeyNameException;
@@ -34,6 +37,7 @@ import org.dbflute.helper.token.file.FileMakingCallback;
 import org.dbflute.helper.token.file.FileMakingRowWriter;
 import org.dbflute.helper.token.file.FileToken;
 import org.dbflute.properties.DfDocumentProperties;
+import org.dbflute.s2dao.valuetype.TnValueTypes;
 import org.dbflute.system.DBFluteSystem;
 import org.dbflute.util.DfCollectionUtil;
 
@@ -133,7 +137,13 @@ public class DfCraftDiffAssertHandler {
                 final Map<String, String> recordMap = StringKeyMap.createAsFlexibleOrdered();
                 final int firstIndex = 1; // 1 origin in JDBC
                 for (int i = firstIndex; i <= columnCount; i++) {
-                    final String value = rs.getString(i);
+                    final String value;
+                    try {
+                        value = getValue(rs, metaData, i);
+                    } catch (SQLException e) {
+                        handleSQLException(e, sql);
+                        return null; // reachable
+                    }
                     if (i == firstIndex) { // first loop
                         assertCraftKeyExists(value, sqlFile, sql);
                         assertUniqueCraftKey(value, sqlFile, sql, craftKeyNameSet);
@@ -151,6 +161,19 @@ public class DfCraftDiffAssertHandler {
                 rs.close();
             }
         }
+    }
+
+    protected String getValue(ResultSet rs, ResultSetMetaData metaData, int i) throws SQLException {
+        final String value;
+        int jdbcDefValue = metaData.getColumnType(i);
+        if (jdbcDefValue == Types.BINARY || jdbcDefValue == Types.VARBINARY || jdbcDefValue == Types.LONGVARBINARY
+                || jdbcDefValue == Types.BLOB) {
+            byte[] bytes = (byte[]) TnValueTypes.BYTES_BLOB.getValue(rs, i);
+            value = bytes == null ? null : DatatypeConverter.printBase64Binary(bytes);
+        } else {
+            value = rs.getString(i);
+        }
+        return value;
     }
 
     protected void handleSQLException(SQLException e, String sql) throws SQLException {
