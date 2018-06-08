@@ -999,21 +999,24 @@ public class DfSchemaDiff extends DfAbstractDiff {
                 }
             }
         }
-        nextLoop: for (KEY nextKey : keyList) {
-            final String nextName = differ.constraintName(nextKey);
-            if (nextName == null || nextPreviousMap.containsKey(nextName)) {
-                continue;
-            }
-            for (KEY previousKey : differ.keyList(previousTable)) {
-                final String previousName = differ.constraintName(previousKey);
-                if (previousNextMap.containsKey(previousName)) {
+        final DfDocumentProperties prop = DfBuildProperties.getInstance().getDocumentProperties();
+        if (!prop.isCheckConstraintNameDiff()) {
+            nextLoop: for (KEY nextKey : keyList) {
+                final String nextName = differ.constraintName(nextKey);
+                if (nextName == null || nextPreviousMap.containsKey(nextName)) {
                     continue;
                 }
-                if (differ.isSameStructure(nextKey, previousKey)) { // found
-                    nextPreviousMap.put(nextName, previousKey);
-                    previousNextMap.put(previousName, nextKey);
-                    sameStructureNextSet.add(nextName);
-                    continue nextLoop;
+                for (KEY previousKey : differ.keyList(previousTable)) {
+                    final String previousName = differ.constraintName(previousKey);
+                    if (previousNextMap.containsKey(previousName)) {
+                        continue;
+                    }
+                    if (differ.isSameStructure(nextKey, previousKey)) { // found
+                        nextPreviousMap.put(nextName, previousKey);
+                        previousNextMap.put(previousName, nextKey);
+                        sameStructureNextSet.add(nextName);
+                        continue nextLoop;
+                    }
                 }
             }
         }

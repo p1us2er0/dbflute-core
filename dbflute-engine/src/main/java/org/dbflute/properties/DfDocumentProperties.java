@@ -513,6 +513,10 @@ public final class DfDocumentProperties extends DfAbstractDBFluteProperties {
         return isProperty("isCheckProcedureDiff", false, getDocumentMap());
     }
 
+    public boolean isCheckConstraintNameDiff() {
+        return isProperty("isCheckConstraintNameDiff", false, getDocumentMap());
+    }
+
     // -----------------------------------------------------
     //                                             CraftDiff
     //                                             ---------
