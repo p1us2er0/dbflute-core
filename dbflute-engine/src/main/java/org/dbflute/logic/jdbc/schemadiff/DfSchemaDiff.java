@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
+import java.util.function.BiPredicate;
 
 import org.apache.torque.engine.database.model.Column;
 import org.apache.torque.engine.database.model.Database;
@@ -459,10 +460,10 @@ public class DfSchemaDiff extends DfAbstractDiff {
     //                                                 -----
     protected void processAddedTable() {
         final List<Table> tableList = _nextDb.getTableList();
-        for (Table table : tableList) {
-            final Table found = findPreviousTable(table);
-            if (found == null || !isSameTableName(table, found)) { // added
-                addTableDiff(DfTableDiff.createAdded(table.getTableDbName()));
+        for (Table next : tableList) {
+            Map<String, String> sameTableMap = analyzeSameTableMap(_nextDb, _previousDb);
+            if (!sameTableMap.containsKey(next.getTableDbName())) {
+                addTableDiff(DfTableDiff.createAdded(next.getTableDbName()));
             }
         }
     }
@@ -473,30 +474,43 @@ public class DfSchemaDiff extends DfAbstractDiff {
     protected void processChangedTable() {
         final List<Table> tableList = _nextDb.getTableList();
         for (Table next : tableList) {
-            final Table previous = findPreviousTable(next);
-            if (previous == null || !isSameTableName(next, previous)) {
-                continue;
-            }
-            // found
-            final DfTableDiff tableDiff = DfTableDiff.createChanged(next.getTableDbName());
+            Map<String, String> sameTableMap = analyzeSameTableMap(_nextDb, _previousDb);
+            if (sameTableMap.containsKey(next.getTableDbName())) {
+                Table previous = _previousDb.getTable(sameTableMap.get(next.getTableDbName()));
+                // found
+                final DfTableDiff tableDiff = DfTableDiff.createChanged(next.getTableDbName());
 
-            // direct attributes
-            processUnifiedSchema(next, previous, tableDiff);
-            processObjectType(next, previous, tableDiff);
-            processColumnDefOrder(next, previous, tableDiff);
-            processTableComment(next, previous, tableDiff);
+                // direct attributes
+                processTableName(next, previous, tableDiff);
+                processUnifiedSchema(next, previous, tableDiff);
+                processObjectType(next, previous, tableDiff);
+                processColumnDefOrder(next, previous, tableDiff);
+                processTableComment(next, previous, tableDiff);
 
-            // nested attributes
-            processColumn(tableDiff, next, previous);
-            processPrimaryKey(tableDiff, next, previous);
-            processForeignKey(tableDiff, next, previous);
-            processUniqueKey(tableDiff, next, previous);
-            processIndex(tableDiff, next, previous);
+                // nested attributes
+                processColumn(tableDiff, next, previous);
+                processPrimaryKey(tableDiff, next, previous);
+                processForeignKey(tableDiff, next, previous);
+                processUniqueKey(tableDiff, next, previous);
+                processIndex(tableDiff, next, previous);
 
-            if (tableDiff.hasDiff()) { // changed
-                addTableDiff(tableDiff);
+                if (tableDiff.hasDiff()) { // changed
+                    addTableDiff(tableDiff);
+                } 
             }
         }
+    }
+
+    protected void processTableName(Table next, Table previous, DfTableDiff tableDiff) {
+        diffNextPrevious(next, previous, tableDiff, new StringNextPreviousDiffer<Table, DfTableDiff>() {
+            public String provide(Table obj) {
+                return obj.getTableDbName();
+            }
+
+            public void diff(DfTableDiff diff, DfNextPreviousDiff nextPreviousDiff) {
+                diff.setTableNameDiff(nextPreviousDiff);
+            }
+        });
     }
 
     protected void processUnifiedSchema(Table next, Table previous, DfTableDiff tableDiff) {
@@ -674,10 +688,10 @@ public class DfSchemaDiff extends DfAbstractDiff {
     //                                               -------
     protected void processDeletedTable() {
         final List<Table> tableList = _previousDb.getTableList();
-        for (Table table : tableList) {
-            final Table found = findNextTable(table);
-            if (found == null || !isSameTableName(table, found)) { // deleted
-                addTableDiff(DfTableDiff.createDeleted(table.getTableDbName()));
+        Map<String, String> sameTableMap = analyzeSameTableMap(_previousDb, _nextDb);
+        for (Table previous : tableList) {
+            if (!sameTableMap.containsKey(previous.getTableDbName())) {
+                addTableDiff(DfTableDiff.createDeleted(previous.getTableDbName()));
             }
         }
     }
@@ -723,6 +737,60 @@ public class DfSchemaDiff extends DfAbstractDiff {
         return isSame(next.getTableDbName(), previous.getTableDbName());
     }
 
+    protected Map<String, String> analyzeSameTableMap(Database database, Database otherDatabase) {
+        final Map<String, String> sameTableMap = DfCollectionUtil.newLinkedHashMap();
+        nextLoop: for (Table table : database.getTableList()) {
+            for (Table otherTable : otherDatabase.getTableList()) {
+                if (!sameTableMap.containsValue(otherTable.getTableDbName())) {
+                    if (isSameTableName(table, otherTable)) {
+                        sameTableMap.put(table.getTableDbName(), otherTable.getTableDbName());
+                        continue nextLoop;
+                    }
+                }
+            }
+        }
+        final DfDocumentProperties prop = DfBuildProperties.getInstance().getDocumentProperties();
+        if (prop.isCheckTableRenameDiff()) {
+            List<BiPredicate<Column, Table>> sameTableLambdaList = DfCollectionUtil.newArrayList();
+            sameTableLambdaList.add((column, otherTable) -> {
+                if (column.isCommonColumn()) {
+                    return false;
+                }
+                if (otherTable.getColumnNameList().contains(column.getName())) {
+                    return false;
+                }
+                String columnName = column.getName().toLowerCase().replace(column.getTable().getTableDbName().toLowerCase(),
+                        otherTable.getTableDbName().toLowerCase());
+                if (otherTable.getColumnNameList().stream()
+                        .anyMatch(otherColumnName -> isSame(otherColumnName.toLowerCase(), columnName))) {
+                    return false;
+                }
+                return true;
+            });
+            for (BiPredicate<Column, Table> sameTableLambda : sameTableLambdaList) {
+                nextLoop: for (Table table : database.getTableList()) {
+                    if (!sameTableMap.containsKey(table.getTableDbName())) {
+                        for (Table otherTable : otherDatabase.getTableList()) {
+                            if (!sameTableMap.containsValue(otherTable.getTableDbName())) {
+                                long diffCount = table.getColumnList().stream().filter(column -> {
+                                    return sameTableLambda.test(column, otherTable);
+                                }).count() + otherTable.getColumnList().stream().filter(column -> {
+                                    return sameTableLambda.test(column, otherTable);
+                                }).count();
+                                int allowDiffCount = Math.abs(table.getColumnList().size() - otherTable.getColumnList().size()) + 3;
+                                if (diffCount <= allowDiffCount) {
+                                    sameTableMap.put(table.getTableDbName(), otherTable.getTableDbName());
+                                    continue nextLoop;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return sameTableMap;
+    }
+
     // ===================================================================================
     //                                                                      Column Process
     //                                                                      ==============
@@ -739,10 +807,10 @@ public class DfSchemaDiff extends DfAbstractDiff {
     //                                                 Added
     //                                                 -----
     protected void processAddedColumn(DfTableDiff tableDiff, Table nextTable, Table previousTable) {
+        Map<String, String> sameColumnMap = analyzeSameColumnMap(nextTable, previousTable);
         final List<Column> columnList = nextTable.getColumnList();
         for (Column column : columnList) {
-            final Column found = previousTable.getColumn(column.getName());
-            if (found == null || !isSameColumnName(column, found)) { // added
+            if (!sameColumnMap.containsKey(column.getName())) { // added
                 tableDiff.addColumnDiff(DfColumnDiff.createAdded(column.getName()));
             }
         }
@@ -752,24 +820,37 @@ public class DfSchemaDiff extends DfAbstractDiff {
     //                                               Changed
     //                                               -------
     protected void processChangedColumn(DfTableDiff tableDiff, Table nextTable, Table previousTable) {
+        Map<String, String> sameColumnMap = analyzeSameColumnMap(nextTable, previousTable);
         final List<Column> columnList = nextTable.getColumnList();
         for (Column next : columnList) {
-            final Column previous = previousTable.getColumn(next.getName());
-            if (previous == null || !isSameColumnName(next, previous)) {
-                continue;
-            }
-            // found
-            final DfColumnDiff columnDiff = DfColumnDiff.createChanged(next.getName());
-            processDbType(next, previous, columnDiff);
-            processColumnSize(next, previous, columnDiff);
-            processDefaultValue(next, previous, columnDiff);
-            processNotNull(next, previous, columnDiff);
-            processAutoIncrement(next, previous, columnDiff);
-            processColumnComment(next, previous, columnDiff);
-            if (columnDiff.hasDiff()) { // changed
-                tableDiff.addColumnDiff(columnDiff);
+            if (sameColumnMap.containsKey(next.getName())) {
+                // found
+                Column previous = previousTable.getColumn(sameColumnMap.get(next.getName()));
+                final DfColumnDiff columnDiff = DfColumnDiff.createChanged(next.getName());
+                processColumnName(next, previous, columnDiff);
+                processDbType(next, previous, columnDiff);
+                processColumnSize(next, previous, columnDiff);
+                processDefaultValue(next, previous, columnDiff);
+                processNotNull(next, previous, columnDiff);
+                processAutoIncrement(next, previous, columnDiff);
+                processColumnComment(next, previous, columnDiff);
+                if (columnDiff.hasDiff()) { // changed
+                    tableDiff.addColumnDiff(columnDiff);
+                }
             }
         }
+    }
+
+    protected void processColumnName(Column next, Column previous, DfColumnDiff columnDiff) {
+        diffNextPrevious(next, previous, columnDiff, new StringNextPreviousDiffer<Column, DfColumnDiff>() {
+            public String provide(Column obj) {
+                return obj.getName();
+            }
+
+            public void diff(DfColumnDiff diff, DfNextPreviousDiff nextPreviousDiff) {
+                diff.setColumnNameDiff(nextPreviousDiff);
+            }
+        });
     }
 
     protected void processDbType(Column next, Column previous, DfColumnDiff columnDiff) {
@@ -874,10 +955,10 @@ public class DfSchemaDiff extends DfAbstractDiff {
     //                                               Deleted
     //                                               -------
     protected void processDeletedColumn(DfTableDiff tableDiff, Table nextTable, Table previousTable) {
+        Map<String, String> sameColumnMap = analyzeSameColumnMap(previousTable, nextTable);
         final List<Column> columnList = previousTable.getColumnList();
         for (Column column : columnList) {
-            final Column found = nextTable.getColumn(column.getName());
-            if (found == null || !isSameColumnName(column, found)) { // deleted
+            if (!sameColumnMap.containsKey(column.getName())) { // deleted
                 tableDiff.addColumnDiff(DfColumnDiff.createDeleted(column.getName()));
             }
         }
@@ -886,8 +967,50 @@ public class DfSchemaDiff extends DfAbstractDiff {
     // -----------------------------------------------------
     //                                           Same Helper
     //                                           -----------
-    protected boolean isSameColumnName(Column next, Column previous) {
-        return isSame(next.getName(), previous.getName());
+    protected Map<String, String> analyzeSameColumnMap(Table table, Table otherTable) {
+        Map<String, String> sameColumnMap = DfCollectionUtil.newLinkedHashMap();
+
+        List<BiPredicate<Column, Column>> sameColumnLambdaList = DfCollectionUtil.newArrayList();
+        sameColumnLambdaList.add((column, otherColumn) -> isSameColumnName(column, otherColumn));
+
+        final DfDocumentProperties prop = DfBuildProperties.getInstance().getDocumentProperties();
+        if (prop.isCheckColumnRenameDiff()) {
+            sameColumnLambdaList.add((column, otherColumn) -> {
+                String columnName = column.getName().toLowerCase().replace(column.getTable().getTableDbName().toLowerCase(),
+                        otherColumn.getTable().getTableDbName().toLowerCase());
+                return isSame(columnName, otherColumn.getName().toLowerCase());
+            });
+            sameColumnLambdaList.add((column, otherColumn) -> {
+                return isSame(column.getTable().getColumnIndex(column.getName()),
+                        otherColumn.getTable().getColumnIndex(otherColumn.getName())) && Srl.is_NotNull_and_NotEmpty(column.getAlias())
+                        && isSame(column.getAlias(), otherColumn.getAlias()) && isSame(column.getDbType(), otherColumn.getDbType())
+                        && isSame(column.getColumnSize(), otherColumn.getColumnSize());
+            });
+            sameColumnLambdaList.add((column, otherColumn) -> {
+                return Srl.is_NotNull_and_NotEmpty(column.getAlias()) && isSame(column.getAlias(), otherColumn.getAlias())
+                        && isSame(column.getDbType(), otherColumn.getDbType())
+                        && isSame(column.getColumnSize(), otherColumn.getColumnSize());
+            });
+        }
+        for (BiPredicate<Column, Column> sameColumnLambda : sameColumnLambdaList) {
+            nextLoop: for (Column column : table.getColumnList()) {
+                if (!sameColumnMap.containsKey(column.getName())) {
+                    for (Column otherColumn : otherTable.getColumnList()) {
+                        if (!sameColumnMap.containsValue(otherColumn.getName())) {
+                            if (sameColumnLambda.test(column, otherColumn)) {
+                                sameColumnMap.put(column.getName(), otherColumn.getName());
+                                continue nextLoop;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return sameColumnMap;
+    }
+
+    protected boolean isSameColumnName(Column column, Column otherColumn) {
+        return isSame(column.getName(), otherColumn.getName());
     }
 
     // ===================================================================================

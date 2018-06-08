@@ -40,6 +40,7 @@ public class DfTableDiff extends DfAbstractDiff implements DfNestDiff {
     // -----------------------------------------------------
     //                                             Diff Item
     //                                             ---------
+    protected DfNextPreviousDiff _tableNameDiff;
     protected DfNextPreviousDiff _unifiedSchemaDiff;
     protected DfNextPreviousDiff _objectTypeDiff;
     protected DfNextPreviousDiff _columnDefOrderDiff;
@@ -47,6 +48,23 @@ public class DfTableDiff extends DfAbstractDiff implements DfNestDiff {
 
     protected List<NextPreviousHandler> _nextPreviousItemList = DfCollectionUtil.newArrayList();
     {
+        _nextPreviousItemList.add(new NextPreviousHandlerBase() {
+            public String titleName() {
+                return "Name";
+            }
+
+            public String propertyName() {
+                return "tableNameDiff";
+            }
+
+            public DfNextPreviousDiff provide() {
+                return _tableNameDiff;
+            }
+
+            public void restore(Map<String, Object> tableDiffMap) {
+                _tableNameDiff = restoreNextPreviousDiff(tableDiffMap, propertyName());
+            }
+        });
         _nextPreviousItemList.add(new NextPreviousHandlerBase() {
             public String titleName() {
                 return "Schema";
@@ -402,6 +420,18 @@ public class DfTableDiff extends DfAbstractDiff implements DfNestDiff {
             }
         }
         return diffHandlerList;
+    }
+
+    public boolean hasTableNameDiff() {
+        return _tableNameDiff != null;
+    }
+
+    public DfNextPreviousDiff getTableNameDiff() {
+        return _tableNameDiff;
+    }
+
+    public void setTableNameDiff(DfNextPreviousDiff tableNameDiff) {
+        _tableNameDiff = tableNameDiff;
     }
 
     public boolean hasUnifiedSchemaDiff() {

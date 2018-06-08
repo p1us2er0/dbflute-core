@@ -38,6 +38,7 @@ public class DfColumnDiff extends DfAbstractDiff implements DfNestDiff {
     // -----------------------------------------------------
     //                                             Diff Item
     //                                             ---------
+    protected DfNextPreviousDiff _columnNameDiff;
     protected DfNextPreviousDiff _dbTypeDiff;
     protected DfNextPreviousDiff _columnSizeDiff;
     protected DfNextPreviousDiff _defaultValueDiff;
@@ -47,6 +48,23 @@ public class DfColumnDiff extends DfAbstractDiff implements DfNestDiff {
 
     protected List<NextPreviousHandler> _nextPreviousItemList = DfCollectionUtil.newArrayList();
     {
+        _nextPreviousItemList.add(new NextPreviousHandlerBase() {
+            public String titleName() {
+                return "Name";
+            }
+
+            public String propertyName() {
+                return "columnNameDiff";
+            }
+
+            public DfNextPreviousDiff provide() {
+                return _columnNameDiff;
+            }
+
+            public void restore(Map<String, Object> columnDiffMap) {
+                _columnNameDiff = restoreNextPreviousDiff(columnDiffMap, propertyName());
+            }
+        });
         _nextPreviousItemList.add(new NextPreviousHandlerBase() {
             public String titleName() {
                 return "Type";
@@ -294,6 +312,18 @@ public class DfColumnDiff extends DfAbstractDiff implements DfNestDiff {
             }
         }
         return validHandlerList;
+    }
+
+    public boolean hasColumnNameDiff() {
+        return _columnNameDiff != null;
+    }
+
+    public DfNextPreviousDiff getColumnNameDiff() {
+        return _columnNameDiff;
+    }
+
+    public void setColumnNameDiff(DfNextPreviousDiff columnNameDiff) {
+        _columnNameDiff = columnNameDiff;
     }
 
     public boolean hasDbTypeDiff() {
